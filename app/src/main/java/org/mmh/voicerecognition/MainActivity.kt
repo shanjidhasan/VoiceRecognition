@@ -1,204 +1,164 @@
 package org.mmh.voicerecognition
 
-import android.content.Context
-import android.content.Intent
-import android.media.AudioManager
-import android.os.Build
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.widget.ImageView
-import android.widget.TextView
-import android.widget.Toast
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.getSystemService
-import org.mmh.voicerecognition.R
-import java.util.*
+import android.util.Log
+import android.view.View
+import android.widget.ProgressBar
+import android.widget.TextView
 
-class MainActivity : AppCompatActivity(), RecognitionListener {
+class MainActivity : AppCompatActivity(), RecognitionCallback {
 
-    // on below line we are creating variables
-    // for text view and image view
-    lateinit var outputTV: TextView
-    lateinit var micIV: ImageView
-    private val activationKeyword: String = "Hello"
-    private val shouldMute: Boolean = false
-    private val callback: RecognitionCallback? = null
-    private var isActivated: Boolean = false
-    private val speech: SpeechRecognizer by lazy { SpeechRecognizer.createSpeechRecognizer(applicationContext) }
-    private val audioManager: AudioManager? = applicationContext.getSystemService() as AudioManager?
+    companion object {
+        /**
+         * Put any keyword that will trigger the speech recognition
+         */
+        private const val ACTIVATION_KEYWORD = "Hi"
+        private const val RECORD_AUDIO_REQUEST_CODE = 101
+    }
 
-    // on below line we are creating a constant value
-    private val REQUEST_CODE_SPEECH_INPUT = 1
+    private val recognitionManager: KontinuousRecognitionManager by lazy {
+        KontinuousRecognitionManager(this, activationKeyword = ACTIVATION_KEYWORD, callback = this)
+    }
+    lateinit var progressBar: ProgressBar
+    lateinit var textView: TextView
 
+    @SuppressLint("MissingInflatedId")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        progressBar = findViewById(R.id.progressBar)
+        textView = findViewById(R.id.textView)
 
-        // initializing variables of list view with their ids.
-        outputTV = findViewById(R.id.idTVOutput)
-        micIV = findViewById(R.id.idIVMic)
+        progressBar.visibility = View.INVISIBLE
+        progressBar.max = 10
 
-        // on below line we are adding on click
-        // listener for mic image view.
-        micIV.setOnClickListener {
-            // on below line we are calling speech recognizer intent.
+        recognitionManager.createRecognizer()
 
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), RECORD_AUDIO_REQUEST_CODE)
         }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
-            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, applicationContext.packageName)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            }
-        }
-//            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-//
-//            // on below line we are passing language model
-//            // and model free form in our intent
-//            intent.putExtra(
-//                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-//                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-//            )
-//
-//            // on below line we are passing our
-//            // language as a default language.
-//            intent.putExtra(
-//                RecognizerIntent.EXTRA_LANGUAGE,
-//                Locale.getDefault()
-//            )
-
-            // on below line we are specifying a prompt
-            // message as speak to text on below line.
-//            intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to text")
-
-            // on below line we are specifying a try catch block.
-            // in this block we are calling a start activity
-            // for result method and passing our result code.
-            try {
-                startActivityForResult(intent, REQUEST_CODE_SPEECH_INPUT)
-            } catch (e: Exception) {
-                // on below line we are displaying error message in toast
-                Toast
-                    .makeText(
-                        this@MainActivity, " " + e.message,
-                        Toast.LENGTH_SHORT
-                    )
-                    .show()
-            }
-        }
-
-    override fun onBeginningOfSpeech() {
-        callback?.onBeginningOfSpeech()
     }
 
-    override fun onReadyForSpeech(params: Bundle) {
-        muteRecognition(shouldMute || !isActivated)
-        callback?.onReadyForSpeech(params)
+    override fun onDestroy() {
+        recognitionManager.destroyRecognizer()
+        super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startRecognition()
+        }
+    }
+
+    override fun onPause() {
+        stopRecognition()
+        super.onPause()
+    }
+
+    private fun startRecognition() {
+        progressBar.isIndeterminate = false
+        progressBar.visibility = View.VISIBLE
+        recognitionManager.startRecognition()
+    }
+
+    private fun stopRecognition() {
+        progressBar.isIndeterminate = true
+        progressBar.visibility = View.INVISIBLE
+        recognitionManager.stopRecognition()
+    }
+
+    private fun getErrorText(errorCode: Int): String = when (errorCode) {
+        SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+        SpeechRecognizer.ERROR_CLIENT -> "Client side error"
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+        SpeechRecognizer.ERROR_NETWORK -> "Network error"
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+        SpeechRecognizer.ERROR_NO_MATCH -> "No match"
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "RecognitionService busy"
+        SpeechRecognizer.ERROR_SERVER -> "Error from server"
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
+        else -> "Didn't understand, please try again."
+    }
+
+    override fun onBeginningOfSpeech() {
+        Log.i("Recognition","onBeginningOfSpeech")
     }
 
     override fun onBufferReceived(buffer: ByteArray) {
-        callback?.onBufferReceived(buffer)
-    }
-
-    override fun onRmsChanged(rmsdB: Float) {
-        callback?.onRmsChanged(rmsdB)
+        Log.i("Recognition", "onBufferReceived: $buffer")
     }
 
     override fun onEndOfSpeech() {
-        callback?.onEndOfSpeech()
+        Log.i("Recognition","onEndOfSpeech")
     }
 
     override fun onError(errorCode: Int) {
-        if (isActivated) {
-            callback?.onError(errorCode)
-        }
-        isActivated = false
-
-        when (errorCode) {
-            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> cancelRecognition()
-            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                destroyRecognizer()
-                createRecognizer()
-            }
-        }
-
-        startRecognition()
+        val errorMessage = getErrorText(errorCode)
+        Log.i("Recognition","onError: $errorMessage")
+        textView.text = errorMessage
     }
 
     override fun onEvent(eventType: Int, params: Bundle) {
-        callback?.onEvent(eventType, params)
+        Log.i("Recognition","onEvent")
     }
 
-    override fun onPartialResults(partialResults: Bundle) {
-        val matches = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-        if (isActivated && matches != null) {
-            callback?.onPartialResults(matches)
-        }
+    override fun onReadyForSpeech(params: Bundle) {
+        Log.i("Recognition","onReadyForSpeech")
     }
 
-    override fun onResults(results: Bundle) {
-        val matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-        val scores = results.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
-        if (matches != null) {
-            if (isActivated) {
-                isActivated = false
-                callback?.onResults(matches, scores)
-                stopRecognition()
-            } else {
-                matches.firstOrNull { it.contains(other = activationKeyword, ignoreCase = true) }
-                    ?.let {
-                        isActivated = true
-                        callback?.onKeywordDetected()
-                    }
-                startRecognition()
+    override fun onRmsChanged(rmsdB: Float) {
+        progressBar.progress = rmsdB.toInt()
+    }
+
+    override fun onPrepared(status: RecognitionStatus) {
+        when (status) {
+            RecognitionStatus.SUCCESS -> {
+                Log.i("Recognition","onPrepared: Success")
+                textView.text = "Recognition ready"
+            }
+            RecognitionStatus.UNAVAILABLE -> {
+                Log.i("Recognition", "onPrepared: Failure or unavailable")
+                AlertDialog.Builder(this)
+                    .setTitle("Speech Recognizer unavailable")
+                    .setMessage("Your device does not support Speech Recognition. Sorry!")
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show()
             }
         }
     }
-    @Suppress("DEPRECATION")
-    private fun muteRecognition(mute: Boolean) {
-        audioManager?.let {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val flag = if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
-                it.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, flag, 0)
-                it.adjustStreamVolume(AudioManager.STREAM_ALARM, flag, 0)
-                it.adjustStreamVolume(AudioManager.STREAM_MUSIC, flag, 0)
-                it.adjustStreamVolume(AudioManager.STREAM_RING, flag, 0)
-                it.adjustStreamVolume(AudioManager.STREAM_SYSTEM, flag, 0)
-            } else {
-                it.setStreamMute(AudioManager.STREAM_NOTIFICATION, mute)
-                it.setStreamMute(AudioManager.STREAM_ALARM, mute)
-                it.setStreamMute(AudioManager.STREAM_MUSIC, mute)
-                it.setStreamMute(AudioManager.STREAM_RING, mute)
-                it.setStreamMute(AudioManager.STREAM_SYSTEM, mute)
+
+    override fun onKeywordDetected() {
+        Log.i("Recognition","keyword detected !!!")
+        textView.text = "Keyword detected"
+    }
+
+    override fun onPartialResults(results: List<String>) {}
+
+    override fun onResults(results: List<String>, scores: FloatArray?) {
+        val text = results.joinToString(separator = "\n")
+        Log.i("Recognition","onResults : $text")
+        textView.text = text
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            RECORD_AUDIO_REQUEST_CODE -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    startRecognition()
+                }
             }
         }
     }
+
 }
-
-//    // on below line we are calling on activity result method.
-//    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-//        super.onActivityResult(requestCode, resultCode, data)
-//
-//        // in this method we are checking request
-//        // code with our result code.
-//        if (requestCode == REQUEST_CODE_SPEECH_INPUT) {
-//            // on below line we are checking if result code is ok
-//            if (resultCode == RESULT_OK && data != null) {
-//
-//                // in that case we are extracting the
-//                // data from our array list
-//                val res: ArrayList<String> =
-//                    data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) as ArrayList<String>
-//
-//                // on below line we are setting data
-//                // to our output text view.
-//                outputTV.setText(
-//                    Objects.requireNonNull(res)[0]
-//                )
-//            }
-//        }
-//    }
-//}
